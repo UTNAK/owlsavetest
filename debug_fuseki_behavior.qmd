@@ -1,0 +1,406 @@
+---
+title: "Update Query実行時のFusekiサーバの挙動調査"
+date: now
+date-format: "MMM D, YYYY, HH:mm:ss"
+author: "Yuta Nakajima"
+description: "<BR>This shell scripts execute different types of analysis codes."
+title-block-banner: true
+project:
+  type: default
+  output-dir: ../../../public_html
+format:
+  html:
+    theme: 
+      light: flatly
+      dark: darkly    
+    fontsize: 1.0em
+    self-contained: true
+    toc: true
+    toc-location: left
+    number-sections: true
+    number-depth: 3
+    code-fold: false
+    grid:
+      sidebar-width: 200px
+      body-width: 1000px
+      margin-width: 200px
+      gutter-width: 2.5rem
+execute:
+  warning: false
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+## 目的
+
+
+## 手順1: OML立ち上げ
+
+OMLのbuild & load
+ターミナルで、下記コマンドを打つ。owlLoadにbuildも入っているので１発でOK。
+（Windowsではpowershell）
+
+
+```bash
+./gradlew owlLoad
+```
+
+
+正しく実行できると下記のような結果が得られる。
+fusekiサーバが立ち上がっていればOK。
+
+```bash
+(py393) (base) mlab@mlabair kepler16b-using-imce-vocabulary % ./gradlew owlLoad
+Starting a Gradle Daemon, 2 busy Daemons could not be reused, use --status for details
+
+> Task :startFuseki
+Fuseki server has now successfully started with pid=44925, listening on http://localhost:3030
+
+> Task :owlLoadTdb
+Loaded 29 owl file(s), unloaded 0 owl file(s)
+
+> Task :owlLoad
+Loaded 31 owl file(s) to default graph
+
+BUILD SUCCESSFUL in 26s
+6 actionable tasks: 3 executed, 3 up-to-date
+(py393) (base) mlab@mlabair kepler16b-using-imce-vocabulary % 
+```
+
+## 手順２: 事前確認
+
+これから書き換えようとするパラメータの情報を取得する。
+
+
+### load utility files
+
+```{r}
+#| warning: false
+library(stringr)
+library(tansakusuR)
+```
+
+
+## Mission Objective
+
+```{r}
+query_string_check2 <- '
+
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX sa:  <http://example.com/tutorial2/vocabulary/stateanalysis#>
+PREFIX mission: <http://example.com/tutorial2/vocabulary/mission#>
+
+select distinct*
+where{
+  ?c a mission:Objective .
+}
+
+
+'
+```
+
+```{r}
+endpoint_url <- "http://localhost:3030/tutorial2-tdb/"
+ret <- send_query(endpoint_url,query_string_check2)
+ret
+```
+
+
+## 手順3: 書き換え
+Add new instance of mission:Objective
+
+
+
+```{r}
+query_string_update2 <- '
+
+
+PREFIX oml: <http://def.seegrid.csiro.au/ontology/om/om-lite#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX dc: <http://purl.org/dc/elements/1.1/>
+PREFIX mission: <http://example.com/tutorial2/vocabulary/mission#>
+PREFIX oml: <http://opencaesar.io/oml#>
+
+insert {
+  GRAPH <http://example.com/tutorial2/description/objectives> {
+	?insertIri a owl:NamedIndividual;
+      rdf:type mission:Objective;
+      oml:type oml:ConceptInstance.
+    
+  }
+}
+WHERE {
+    BIND(<http://example.com/tutorial2/description/objectives#fromQuarto202412102141> AS ?insertIri)
+}
+
+'
+```
+
+### Query 送付
+
+
+```{r}
+endpoint_url <- "http://localhost:3030/tutorial2-tdb/update"
+ret <- send_update(endpoint_url = endpoint_url, query_string_update2)
+```
+
+
+
+## 手順4: 書き換え結果の確認
+
+本来であれば、SPARQL UPDATEクエリーの結果として書き換えた値が反映されていることを期待。
+しかしながら、endpointには反映されていない。
+なぜか？
+
+
+
+
+### Check
+```{r}
+endpoint_url <- "http://localhost:3030/tutorial2-tdb/"
+ret <- send_query(endpoint_url,query_string_check2)
+ret
+```
+
+
+## 手順5: owlSaveによる確認
+
+上記のendpointのデータは書き換えが反映されていなかった。
+しかしながあら、owlSaveで得られる.ttlファイルには値が反映されていた。
+
+```bash
+./gradlew owlSave
+```
+
+
+[build/save/example.com/tutorial2/description/analysis/orbit_analysis_02.ttl](build/save/example.com/tutorial2/description/analysis/orbit_analysis_02.ttl)のファイルを参照する。
+
+すると下記のようになっており、確かにSPARQL UPDATEの結果が反映されている。
+
+```bash
+orbit_analysis_02:cdp-analysis-02.scenario.value.06
+        rdf:type                    sa:Assumes , owl:NamedIndividual ;
+        sa:assumeInitialStateValue  "thisqueryisfromquarto" , "e5e288a0b2ed554d5fd0014b10e445a82313555396d054a87488ad5cfe218fe8" ;
+        oml:hasSource               orbit_analysis_02:cdp-analysis-02.scenario ;
+        oml:hasTarget               cdpstatedictionary:output.Scenario.FileKey ;
+        oml:type                    oml:RelationInstance .
+
+project:executes  rdf:type  owl:ObjectProperty .
+```
+
+
+## 手順6: owlToOmlによる確認
+
+`owlToOml`コマンドで、owlSaveの結果をOMLファイルに反映できる。
+
+```bash
+./gradlew owlToOml
+```
+
+確かに、SPARQL UPDATEの結果が反映された。
+
+![result of owlToOml](../../image/feat_analysis/1733752673694.png)
+
+
+
+
+## 分かったこと１
+
+UPDATE Queryに下記のグラフオペレータをつけた場合には、owlSaveに反映され、ブラウザには反映されない。
+逆に、グラフオペレータをつけない場合は、owlSaveに反映されず、ブラウザには反映される。
+この違いは一体何なのだろうか？？？
+
+```
+  graph <http://example.com/tutorial2/description/analysis/orbit_analysis_02> {
+
+  }
+
+```
+
+
+
+
+
+```{r}
+query_string_update2 <- '
+
+
+PREFIX oml: <http://def.seegrid.csiro.au/ontology/om/om-lite#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX dc: <http://purl.org/dc/elements/1.1/>
+PREFIX mission: <http://example.com/tutorial2/vocabulary/mission#>
+PREFIX oml: <http://opencaesar.io/oml#>
+
+insert {
+  GRAPH <http://example.com/tutorial2/description/objectives> {
+	?insertIri a owl:NamedIndividual;
+      rdf:type mission:Objective;
+      oml:type oml:ConceptInstance.
+    
+  }
+}
+WHERE {
+    BIND(<http://example.com/tutorial2/description/objectives#fromQuartowithGraph> AS ?insertIri)
+}
+
+'
+```
+
+### Query 送付
+
+
+```{r}
+endpoint_url <- "http://localhost:3030/tutorial2-tdb/update"
+ret <- send_update(endpoint_url = endpoint_url, query_string_update2)
+```
+
+
+### Check
+```{r}
+endpoint_url <- "http://localhost:3030/tutorial2-tdb/"
+ret <- send_query(endpoint_url,query_string_check2)
+ret
+```
+
+
+## LOG
+
+```bash
+(py393) (base) mlab@mlabair kepler16b-example % ./gradlew owlToOml --info
+Initialized native services in: /Users/mlab/.gradle/native
+Initialized jansi services in: /Users/mlab/.gradle/native
+Received JVM installation metadata from '/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home': {JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home, JAVA_VERSION=17.0.8.1, JAVA_VENDOR=Eclipse Adoptium, RUNTIME_NAME=OpenJDK Runtime Environment, RUNTIME_VERSION=17.0.8.1+1, VM_NAME=OpenJDK 64-Bit Server VM, VM_VERSION=17.0.8.1+1, VM_VENDOR=Eclipse Adoptium, OS_ARCH=aarch64}
+The client will now receive all logging from the daemon (pid: 16906). The daemon log file: /Users/mlab/.gradle/daemon/7.6/daemon-16906.out.log
+Starting 6th build in daemon [uptime: 2 mins 28.808 secs, performance: 100%, non-heap usage: 41% of 256 MiB]
+Using 8 worker leases.
+Now considering [/Users/mlab/Workspaces/github/pog7/kepler16b-example] as hierarchies to watch
+Watching the file system is configured to be enabled if available
+File system watching is active
+Starting Build
+Settings evaluated using settings file '/Users/mlab/Workspaces/github/pog7/kepler16b-example/settings.gradle'.
+Projects loaded. Root project using build file '/Users/mlab/Workspaces/github/pog7/kepler16b-example/build.gradle'.
+Included projects: [root project 'kepler16b-example']
+
+> Configure project :
+Evaluating root project 'kepler16b-example' using build file '/Users/mlab/Workspaces/github/pog7/kepler16b-example/build.gradle'.
+All projects evaluated.
+Task name matched 'owlToOml'
+Selected primary task 'owlToOml' from project :
+Tasks to be executed: [task ':downloadDependencies', task ':owlSave', task ':owlToOml']
+Tasks that were excluded: []
+Resolve mutations for :downloadDependencies (Thread[Execution worker,5,main]) started.
+:downloadDependencies (Thread[Execution worker,5,main]) started.
+
+> Task :downloadDependencies UP-TO-DATE
+Caching disabled for task ':downloadDependencies' because:
+  Build cache is disabled
+Skipping task ':downloadDependencies' as it is up-to-date.
+Resolve mutations for :owlSave (Thread[Execution worker,5,main]) started.
+:owlSave (Thread[Execution worker,5,main]) started.
+
+> Task :owlSave
+Caching disabled for task ':owlSave' because:
+  Build cache is disabled
+Task ':owlSave' is not up-to-date because:
+  Task.upToDateWhen is false.
+=================================================================
+                        S T A R T
+                     OWL Save 2.14.0
+=================================================================
+Catalog path = /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/catalog.xml
+Endpoint URL = http://localhost:3030/tutorial2-tdb
+File Extension = ttl
+Fetching dataset at http://localhost:3030/tutorial2-tdb
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/iso.org/iso-80000-4.1.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/masses.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/components.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/iso.org/iso-1087-1.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/requirements.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/vocabulary/mission.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/vocabulary/bundle.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/purl.org/dc/elements/1.1.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/junctions.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/bipm.org/jcgm/vim4.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/vocabulary/mechanical.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/objectives.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/interfaces.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/missions.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/iso.org/iso-80000-1.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/bundle.ttl
+Saving /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/vocabulary/base.ttl
+Saved 17 owl file(s)
+=================================================================
+                          E N D
+=================================================================
+Resolve mutations for :owlToOml (Thread[Execution worker,5,main]) started.
+producer locations for task group 0 (Thread[Execution worker,5,main]) started.
+:owlToOml (Thread[included builds,5,main]) started.
+
+> Task :owlToOml
+Caching disabled for task ':owlToOml' because:
+  Build cache is disabled
+Task ':owlToOml' is not up-to-date because:
+  Input property 'inputFiles' file /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/requirements.ttl has changed.
+  Input property 'inputFiles' file /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/bundle.ttl has changed.
+  Input property 'inputFiles' file /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/missions.ttl has changed.
+=================================================================
+                        S T A R T
+                      Owl to Oml 2.11.0
+=================================================================
+Input catalog path= /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/catalog.xml
+Output catalog path= /Users/mlab/Workspaces/github/pog7/kepler16b-example/catalog.xml
+Source paths= [/Users/mlab/Workspaces/github/pog7/kepler16b-example/src/oml/example.com/model/description/]
+Input file extensions= [ttl]
+Output file extension= oml
+17 owl file(s) have changed
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/vocabulary/base.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/iso.org/iso-80000-1.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/masses.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/components.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/vocabulary/mechanical.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/objectives.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/bundle.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/vocabulary/mission.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/bipm.org/jcgm/vim4.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/purl.org/dc/elements/1.1.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/junctions.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/vocabulary/bundle.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/iso.org/iso-1087-1.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/iso.org/iso-80000-4.1.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/missions.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/interfaces.ttl
+Loading /Users/mlab/Workspaces/github/pog7/kepler16b-example/build/save/example.com/tutorial2/description/requirements.ttl
+Converting: http://example.com/tutorial2/vocabulary/base
+Converting: http://iso.org/iso-1087-1
+Converting: http://example.com/tutorial2/vocabulary/mechanical
+Converting: http://example.com/tutorial2/description/junctions
+Converting: http://example.com/tutorial2/description/objectives
+Converting: http://example.com/tutorial2/vocabulary/mission
+Converting: http://example.com/tutorial2/description/components
+Converting: http://example.com/tutorial2/description/missions
+Converting: http://example.com/tutorial2/description/masses
+Converting: http://example.com/tutorial2/description/bundle
+Converting: http://iso.org/iso-80000-1
+Converting: http://example.com/tutorial2/description/interfaces
+Converting: http://example.com/tutorial2/description/requirements
+Converting: http://iso.org/iso-80000-4.1
+Converting: http://bipm.org/jcgm/vim4
+Converting: http://purl.org/dc/elements/1.1
+Converting: http://example.com/tutorial2/vocabulary/bundle
+0 owl file(s) have been converted
+=================================================================
+                          E N D
+=================================================================
+
+BUILD SUCCESSFUL in 1s
+3 actionable tasks: 2 executed, 1 up-to-date
+Watched directory hierarchies: [/Users/mlab/Workspaces/github/pog7/kepler16b-example]
+(py393) (base) mlab@mlabair kepler16b-example % 
+
+
+```
